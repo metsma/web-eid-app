@@ -44,12 +44,12 @@ namespace
 // Use common base64-encoding defaults.
 constexpr auto BASE64_OPTIONS = QByteArray::Base64Encoding | QByteArray::KeepTrailingEquals;
 
-QVariantMap createAuthenticationToken(const QString& signatureAlgorithm,
+QVariantMap createAuthenticationToken(QByteArrayView signatureAlgorithm,
                                       const QByteArray& certificateDer, const QByteArray& signature)
 {
     return QVariantMap {
         {"unverifiedCertificate", QString(certificateDer.toBase64(BASE64_OPTIONS))},
-        {"algorithm", signatureAlgorithm},
+        {"algorithm", QLatin1String(signatureAlgorithm)},
         {"signature", QString(signature)},
         {"format", QStringLiteral("web-eid:1.0")},
         {"appVersion",
@@ -123,8 +123,7 @@ QVariantMap Authenticate::onConfirm(WebEidUI* window,
                                     const EidCertificateAndPinInfo& certAndPinInfo)
 {
     try {
-        const auto signatureAlgorithm =
-            QString::fromStdString(certAndPinInfo.eid->authSignatureAlgorithm());
+        const std::string_view signatureAlgorithm = certAndPinInfo.eid->authSignatureAlgorithm();
         pcsc_cpp::byte_vector pin;
         // Reserve space for APDU overhead (5 bytes) + PIN padding (16 bytes) to prevent PIN memory
         // reallocation. The 16-byte limit comes from the max PIN length of 12 bytes across all card
@@ -145,7 +144,7 @@ QVariantMap Authenticate::onConfirm(WebEidUI* window,
             emit retry(RetriableError::PIN_VERIFY_DISABLED);
             break;
         default:
-            emit verifyPinFailed(failure.status(), failure.retries());
+            emit verifyPinFailed(failure.status(), failure.retries(), certAndPinInfo.eid);
         }
         if (failure.retries() > 0) {
             throw CommandHandlerVerifyPinFailed(failure.what());

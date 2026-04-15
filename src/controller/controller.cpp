@@ -113,11 +113,18 @@ void Controller::startCommandExecution()
     // When the command handler run thread retrieves certificates successfully, call
     // onCertificatesLoaded() that starts card event monitoring while user enters the PIN.
     connect(commandHandler.get(), &CommandHandler::singleCertificateReady, this,
-            &Controller::onCertificatesLoaded);
+            [this](const QUrl&, const EidCertificateAndPinInfo& info) {
+                // SIGN: card already chosen in GET_SIGNING_CERTIFICATE, watch only that card.
+                // AUTH/GET_SIGNING_CERTIFICATE: watch all readers to detect any card change.
+                onCertificatesLoaded(commandType() == CommandType::SIGN ? info.eid : nullptr);
+            });
     connect(commandHandler.get(), &CommandHandler::multipleCertificatesReady, this,
-            &Controller::onCertificatesLoaded);
+            [this](const QUrl&, const std::vector<EidCertificateAndPinInfo>&) {
+                onCertificatesLoaded(nullptr);
+            });
+    // verifyPinFailed restarts monitoring for the selected card.
     connect(commandHandler.get(), &CommandHandler::verifyPinFailed, this,
-            &Controller::onCertificatesLoaded);
+            [this](auto, auto, ElectronicID::ptr eid) { onCertificatesLoaded(std::move(eid)); });
 
     // UI setup.
     createWindow();
@@ -167,11 +174,12 @@ try {
     onCriticalFailure(error.what());
 }
 
-void Controller::onCertificatesLoaded() noexcept
+void Controller::onCertificatesLoaded(ElectronicID::ptr eid) noexcept
 try {
-    auto* cardEventMonitorThread = new CardEventMonitorThread(this, commandType());
+    auto* cardEventMonitorThread =
+        new CardEventMonitorThread(this, commandType(), std::move(eid));
     connect(this, &Controller::stopCardEventMonitorThread, cardEventMonitorThread,
-            &CardEventMonitorThread::requestInterruption);
+            &CardEventMonitorThread::cancelWait);
     connect(cardEventMonitorThread, &ControllerChildThread::failure, this,
             &Controller::onCriticalFailure);
     connect(cardEventMonitorThread, &CardEventMonitorThread::cardEvent, this, &Controller::onRetry);
@@ -225,6 +233,8 @@ try {
     // Command handler signals are still connected, disconnect them so that they can be
     // reconnected during next execution.
     commandHandler->disconnect();
+    // Cancel any blocked card event monitors before waiting for threads to finish.
+    emit stopCardEventMonitorThread();
     // Before restarting, wait until child threads finish.
     waitForChildThreads();
 

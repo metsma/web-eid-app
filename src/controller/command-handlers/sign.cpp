@@ -117,7 +117,7 @@ QVariantMap Sign::onConfirm(WebEidUI* window, const EidCertificateAndPinInfo& ce
             emit retry(RetriableError::PIN_VERIFY_DISABLED);
             break;
         default:
-            emit verifyPinFailed(failure.status(), failure.retries());
+            emit verifyPinFailed(failure.status(), failure.retries(), certAndPinInfo.eid);
         }
         // Retries > 0 means that there are retries remaining,
         // < 0 means that retry count is unknown, == 0 means that the PIN is blocked.

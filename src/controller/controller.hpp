@@ -50,7 +50,7 @@ public: // slots
     onCardsAvailable(const std::vector<electronic_id::ElectronicID::ptr>& availableEids) noexcept;
 
     // Called when CommandHandlerRunThread finishes execution.
-    void onCertificatesLoaded() noexcept;
+    void onCertificatesLoaded(electronic_id::ElectronicID::ptr eid) noexcept;
 
     // Called either directly from onDialogOK().
     void onConfirmCommandHandler(const EidCertificateAndPinInfo& certAndPinInfo) noexcept;

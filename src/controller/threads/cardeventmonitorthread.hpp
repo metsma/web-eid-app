@@ -24,55 +24,35 @@
 
 #include "controllerchildthread.hpp"
 
+#include "utils/utils.hpp"
+
 class CardEventMonitorThread : public ControllerChildThread
 {
     Q_OBJECT
 
 public:
     using eid_ptr = electronic_id::ElectronicID::ptr;
-    using eid_ptr_vector = std::vector<electronic_id::ElectronicID::ptr>;
 
-    CardEventMonitorThread(QObject* parent, CommandType commandType) :
-        ControllerChildThread(commandType, parent)
+    CardEventMonitorThread(QObject* parent, CommandType commandType, eid_ptr eid) :
+        ControllerChildThread(commandType, parent), eid(std::move(eid)),
+        monitor(makeMonitor(this->eid))
     {
+    }
+
+    void cancelWait()
+    {
+        requestInterruption();
+        monitor.cancel();
     }
 
     void run() override
     {
-        QMutexLocker lock {&controllerChildThreadMutex};
-
         qDebug() << "Starting" << metaObject()->className() << uintptr_t(this) << "for command"
                  << commandType();
 
-        auto initialCards = getSupportedCardsIgnoringExceptions();
-        sortByReaderNameAndAtr(initialCards);
-
-        while (!isInterruptionRequested()) {
-            using namespace std::chrono_literals;
-            waitForControllerNotify.wait(&controllerChildThreadMutex, 1s);
-
-            eid_ptr_vector updatedCards {};
-
-            try {
-                updatedCards = electronic_id::availableSupportedCards();
-                sortByReaderNameAndAtr(updatedCards);
-            } catch (const std::exception& error) {
-                // Ignore smart card layer errors, they will be handled during next card operation.
-                qWarning() << metaObject()->className() << "ignoring" << commandType()
-                           << "error:" << error;
-            }
-
-            // If interruption was requested during wait, exit without emitting.
-            if (isInterruptionRequested()) {
-                return;
-            }
-
-            // If there was a change in connected supported cards, exit after emitting a card event.
-            if (!areEqualByReaderNameAndAtr(initialCards, updatedCards)) {
-                qDebug() << metaObject()->className() << "card change detected";
-                emit cardEvent();
-                return;
-            }
+        if (monitor.wait() && !isInterruptionRequested()) {
+            qDebug() << metaObject()->className() << "card change detected";
+            emit cardEvent();
         }
     }
 
@@ -82,42 +62,14 @@ signals:
 private:
     void doRun() override
     {
-        // Unused as run() has been overriden.
+        // Unused as run() has been overridden.
     }
 
-    eid_ptr_vector getSupportedCardsIgnoringExceptions()
+    static pcsc_cpp::CardEventMonitor makeMonitor(const eid_ptr& eid)
     {
-        while (!isInterruptionRequested()) {
-            try {
-                return electronic_id::availableSupportedCards();
-            } catch (const std::exception& error) {
-                // Ignore smart card layer errors, they will be handled during next card operation.
-                qWarning() << metaObject()->className() << "ignoring" << commandType()
-                           << "error:" << error;
-            }
-            using namespace std::chrono_literals;
-            waitForControllerNotify.wait(&controllerChildThreadMutex, 1s);
-        }
-        // Interruption was requested, return empty list.
-        return {};
+        return pcsc_cpp::CardEventMonitor(eid ? &eid->smartcard() : nullptr);
     }
 
-    static void sortByReaderNameAndAtr(eid_ptr_vector& a)
-    {
-        std::sort(a.begin(), a.end(), [](const eid_ptr& c1, const eid_ptr& c2) {
-            if (c1->smartcard().readerName() != c2->smartcard().readerName()) {
-                return c1->smartcard().readerName() < c2->smartcard().readerName();
-            }
-            return c1->smartcard().atr() < c2->smartcard().atr();
-        });
-    }
-
-    static bool areEqualByReaderNameAndAtr(const eid_ptr_vector& a, const eid_ptr_vector& b)
-    {
-        return std::equal(a.cbegin(), a.cend(), b.cbegin(), b.cend(),
-                          [](const eid_ptr& c1, const eid_ptr& c2) {
-                              return c1->smartcard().readerName() == c2->smartcard().readerName()
-                                  && c1->smartcard().atr() == c2->smartcard().atr();
-                          });
-    }
+    eid_ptr eid;
+    pcsc_cpp::CardEventMonitor monitor;
 };
